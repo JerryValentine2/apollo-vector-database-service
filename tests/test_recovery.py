@@ -71,7 +71,7 @@ class HTTPContractTests(unittest.TestCase):
     def test_read_route_registered(self):
         rules = {rule.rule for rule in apollo.app.url_map.iter_rules()}
         self.assertIn("/products/<product_id>/documents/<document_id>", rules)
-        self.assertNotIn("/products/<product_id>/documents/<document_id>/content", rules)
+        self.assertIn("/products/<product_id>/documents/<document_id>/content", rules)
 
 
 if __name__ == "__main__":
