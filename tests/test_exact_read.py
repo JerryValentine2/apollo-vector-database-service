@@ -59,5 +59,31 @@ class ExactReadTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
 
 
+    def test_wrong_key_rejected_without_storage_access(self):
+        with patch.object(apollo, "WRITE_KEY", "test-secret"), patch.object(apollo, "get_clients") as clients:
+            response = self.client.get(self.url, headers={"X-Apollo-Write-Key": "incorrect"})
+        self.assertEqual(response.status_code, 403)
+        clients.assert_not_called()
+
+    def test_missing_server_key_fails_closed(self):
+        with patch.object(apollo, "WRITE_KEY", ""), patch.object(apollo, "get_clients") as clients:
+            response = self.client.get(self.url, headers=self.key)
+        self.assertEqual(response.status_code, 503)
+        clients.assert_not_called()
+
+    def test_cross_document_source_uri_rejected(self):
+        bad = dict(self.record, source_uri="gs://test-bucket/other/doc1/source.md")
+        db, storage, snapshot = self.fake_clients(record=bad)
+        with patch.object(apollo, "WRITE_KEY", "test-secret"), patch.object(apollo, "DOCUMENT_BUCKET", "test-bucket"), patch.object(apollo, "get_clients", return_value=(None, db, storage)), patch.object(apollo, "get_document", return_value=(None, snapshot)):
+            response = self.client.get(self.url, headers=self.key)
+        self.assertEqual(response.status_code, 409)
+        storage.bucket.assert_not_called()
+
+    def test_invalid_document_identity_rejected_without_storage_access(self):
+        with patch.object(apollo, "WRITE_KEY", "test-secret"), patch.object(apollo, "get_clients") as clients:
+            response = self.client.get("/products/demo/documents/%20/content", headers=self.key)
+        self.assertEqual(response.status_code, 400)
+        clients.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
