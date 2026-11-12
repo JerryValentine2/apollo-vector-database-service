@@ -22,7 +22,7 @@ class HelpersTests(unittest.TestCase):
 
     def test_invalid_utf8(self):
         with self.assertRaises(ValueError):
-            extract_text_document(b"\\xff", "markdown")
+            extract_text_document(bytes([255]), "markdown")
 
     def test_keyword_ranking(self):
         chunks = [
