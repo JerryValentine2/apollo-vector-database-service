@@ -360,6 +360,44 @@ def ingest_document():
     return document_response(snapshot, snapshot.to_dict(), 201)
 
 
+@app.get("/products/<product_id>/documents/<document_id>/content")
+def read_document_content(product_id, document_id):
+    """Authenticated, integrity-checked exact read of a stored Markdown/JSON source."""
+    access_error = require_write_access()
+    if access_error:
+        return access_error
+    error = validate_identifier(product_id, "product_id") or validate_identifier(document_id, "document_id")
+    if error:
+        return stop_response("INVALID_REQUEST", error, "Invalid document identity.", 400, "validation")
+    try:
+        _, db, storage_client = get_clients()
+        _, snapshot = get_document(db, product_id, document_id)
+        if not snapshot.exists:
+            return stop_response("DOCUMENT_NOT_FOUND", "Document not found.", "Document unavailable.", 404, "retrieval")
+        record = snapshot.to_dict()
+        if record.get("product_id") != product_id or record.get("document_id") != document_id:
+            return stop_response("DOCUMENT_SCOPE_MISMATCH", "Document scope mismatch.", "Document unavailable.", 409, "retrieval")
+        if record.get("document_type") not in ("markdown", "json"):
+            return stop_response("UNSUPPORTED_CONTENT_TYPE", "Only Markdown and JSON are supported.", "Unsupported content type.", 415, "retrieval")
+        uri = record.get("source_uri")
+        prefix = f"gs://{DOCUMENT_BUCKET}/{product_id}/{document_id}/"
+        if not DOCUMENT_BUCKET or not storage_client or not isinstance(uri, str) or not uri.startswith(prefix):
+            return stop_response("INVALID_SOURCE_URI", "Invalid source reference.", "Document unavailable.", 409, "retrieval")
+        blob_name = uri[len(f"gs://{DOCUMENT_BUCKET}/"):]
+        raw = storage_client.bucket(DOCUMENT_BUCKET).blob(blob_name).download_as_bytes()
+        if len(raw) > MAX_PDF_BYTES:
+            return stop_response("CONTENT_TOO_LARGE", "Document exceeds configured limit.", "Content too large.", 413, "retrieval")
+        expected = record.get("source_sha256")
+        if not isinstance(expected, str) or not hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected):
+            return stop_response("SOURCE_INTEGRITY_FAILURE", "Source checksum mismatch.", "Document integrity failure.", 409, "retrieval")
+        return jsonify({"decision": "PASS", "product_id": product_id, "document_id": document_id, "document_type": record["document_type"], "sha256": expected, "content": raw.decode("utf-8")})
+    except UnicodeDecodeError:
+        return stop_response("INVALID_ENCODING", "Source is not UTF-8.", "Invalid document encoding.", 422, "retrieval")
+    except Exception:
+        app.logger.exception("Apollo exact-content retrieval failure")
+        return stop_response("RETRIEVAL_FAILURE", "Exact-content read failed.", "Document retrieval failed.", 500, "retrieval")
+
+
 @app.get("/products/<product_id>/documents/<document_id>")
 def read_document(product_id, document_id):
     product_error = validate_identifier(product_id, "product_id")
